@@ -17,7 +17,7 @@ deploy_challenge() {
         --data '{"type":"TXT","name":"'${prefix}${1}'","content":"'${3}'","ttl":120,"priority":10,"proxied":false}'\
         | jq -r '.result.id')
 
-    echo ${track} > ${1}_track.txt
+    echo ${track} >> ${1}_track.txt
 
     # Add delay to get the new DNS record
     local DELAY=60;
@@ -51,18 +51,22 @@ deploy_challenge() {
 clean_challenge() {
     local DOMAIN="${1}" TOKEN_FILENAME="${2}" TOKEN_VALUE="${3}"
 
-    domain=$(echo ${1} | sed 's/.*\.\(.*\..*\)/\1/')
-    id=$(cat ${1}_track.txt)
-    
-    zone=$(curl -sS -X GET "https://api.cloudflare.com/client/v4/zones?name=${domain}&status=active&page=1&per_page=1" \
-        -H "Authorization: Bearer ${CLOUDFLARE_TOKEN}" \
-        -H "Content-Type: application/json" | jq -r '.result[0].id')
+    if [ -f "${1}_track.txt" ]; then
+        domain=$(echo ${1} | sed 's/.*\.\(.*\..*\)/\1/')
+        IFS=$'\n'; set -f; ids=($(cat ${1}_track.txt))
+        for id in "${ids[@]}"
+        do 
+            zone=$(curl -sS -X GET "https://api.cloudflare.com/client/v4/zones?name=${domain}&status=active&page=1&per_page=1" \
+                -H "Authorization: Bearer ${CLOUDFLARE_TOKEN}" \
+                -H "Content-Type: application/json" | jq -r '.result[0].id')
 
-    curl -sS -X DELETE "https://api.cloudflare.com/client/v4/zones/${zone}/dns_records/${id}" \
-     -H "Authorization: Bearer ${CLOUDFLARE_TOKEN}" \
-     -H "Content-Type: application/json"
+            curl -sS -X DELETE "https://api.cloudflare.com/client/v4/zones/${zone}/dns_records/${id}" \
+            -H "Authorization: Bearer ${CLOUDFLARE_TOKEN}" \
+            -H "Content-Type: application/json"
+        done
 
-    rm "${1}_track.txt"
+        rm "${1}_track.txt"
+    fi
 
     # This hook is called after attempting to validate each domain,
     # whether or not validation was successful. Here you can delete
@@ -77,10 +81,11 @@ clean_challenge() {
 deploy_cert() {
     local DOMAIN="${1}" KEYFILE="${2}" CERTFILE="${3}" FULLCHAINFILE="${4}" CHAINFILE="${5}" TIMESTAMP="${6}"
 
-    aws s3 cp ${2} s3://ssl-certs/${1}/${1}-KEYFILE-${6}.pem
-    aws s3 cp ${3} s3://ssl-certs/${1}/${1}-CERTFILE-${6}.pem
-    aws s3 cp ${4} s3://ssl-certs/${1}/${1}-FULLCHAINFILE-${6}.pem
-    aws s3 cp ${5} s3://ssl-certs/${1}/${1}-CHAINFILE-${6}.pem
+    domain=$(echo ${1} | sed 's/.*\.\(.*\..*\..*\)/\1/')
+    aws s3 cp ${2} s3://${S3BUCKET}/${domain}/${domain}.key
+    aws s3 cp ${3} s3://${S3BUCKET}/${domain}/${domain}.crt
+    aws s3 cp ${4} s3://${S3BUCKET}/${domain}/${domain}.fullchain.pem
+    aws s3 cp ${5} s3://${S3BUCKET}/${domain}/${domain}.chain.pem
 
     # This hook is called once for each certificate that has been
     # produced. Here you might, for instance, copy your new certificates
@@ -109,6 +114,7 @@ deploy_cert() {
 deploy_ocsp() {
     local DOMAIN="${1}" OCSPFILE="${2}" TIMESTAMP="${3}"
 
+    echo " - [deploy_ocsp]";
     # This hook is called once for each updated ocsp stapling file that has
     # been produced. Here you might, for instance, copy your new ocsp stapling
     # files to service-specific locations and reload the service.
@@ -131,6 +137,7 @@ deploy_ocsp() {
 unchanged_cert() {
     local DOMAIN="${1}" KEYFILE="${2}" CERTFILE="${3}" FULLCHAINFILE="${4}" CHAINFILE="${5}"
 
+    echo " - [unchanged_cert]";
     # This hook is called once for each certificate that is still
     # valid and therefore wasn't reissued.
     #
@@ -151,6 +158,7 @@ unchanged_cert() {
 invalid_challenge() {
     local DOMAIN="${1}" RESPONSE="${2}"
 
+    echo " - [invalid_challenge]";
     # This hook is called if the challenge response has failed, so domain
     # owners can be aware and act accordingly.ls
     #
@@ -168,6 +176,7 @@ invalid_challenge() {
 request_failure() {
     local STATUSCODE="${1}" REASON="${2}" REQTYPE="${3}" HEADERS="${4}"
 
+    echo " - [request_failure]";
     # This hook is called when an HTTP request fails (e.g., when the ACME
     # server is busy, returns an error, etc). It will be called upon any
     # response code that does not start with '2'. Useful to alert admins
@@ -190,6 +199,7 @@ request_failure() {
 generate_csr() {
     local DOMAIN="${1}" CERTDIR="${2}" ALTNAMES="${3}"
 
+    echo " - [generate_csr]";
     # This hook is called before any certificate signing operation takes place.
     # It can be used to generate or fetch a certificate signing request with external
     # tools.
